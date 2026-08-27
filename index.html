@@ -259,15 +259,15 @@ function sSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){ STORE_OK=false; M
 
 /* ============================ program ============================ */
 var LIFTS = {
-  squat:      {n:"Back Squat",           t:"bar", sets:3, reps:5,  w:135, inc:10, rest:180, warm:true},
-  benchHeavy: {n:"Bench Press",          t:"bar", sets:3, reps:5,  w:115, inc:5,  rest:180, warm:true},
+  squat:      {n:"Back Squat",           t:"bar", sets:3, reps:5,  w:135, inc:10, rest:180, warm:true, ladder:[[185,10],[275,5]]},
+  benchHeavy: {n:"Bench Press",          t:"bar", sets:3, reps:5,  w:115, inc:5,  rest:180, warm:true, ladder:[[175,5]]},
   dbRow:      {n:"One-Arm DB Row",       t:"db",  sets:3, reps:10, w:50,  inc:5,  rest:90, creep:2, note:"each side"},
   dips:       {n:"Dips",                 t:"bw",  sets:2, reps:0,  w:0,   inc:5,  rest:90},
-  deadlift:   {n:"Deadlift",             t:"bar", sets:1, reps:5,  w:155, inc:10, rest:180, warm:true, nobar:true, floor:135},
-  ohp:        {n:"Overhead Press",       t:"bar", sets:3, reps:5,  w:80,  inc:5,  rest:180, warm:true},
+  deadlift:   {n:"Deadlift",             t:"bar", sets:1, reps:5,  w:155, inc:10, rest:180, warm:true, nobar:true, floor:135, ladder:[[225,10],[315,5]]},
+  ohp:        {n:"Overhead Press",       t:"bar", sets:3, reps:5,  w:80,  inc:5,  rest:180, warm:true, ladder:[[115,5]]},
   chinups:    {n:"Chin-Ups",             t:"bw",  sets:3, reps:0,  w:0,   inc:5,  rest:90},
   ezCurl:     {n:"EZ Bar Curl",          t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60},
-  benchVol:   {n:"Bench Press — Volume", t:"bar", sets:4, reps:8,  w:95,  inc:5,  rest:120, warm:true},
+  benchVol:   {n:"Bench Press — Volume", t:"bar", sets:4, reps:8,  w:95,  inc:5,  rest:120, warm:true, ladder:[[145,5]]},
   incline:    {n:"Incline DB Press",     t:"db",  sets:3, reps:10, w:45,  inc:5,  rest:120, creep:2},
   rdl:        {n:"Romanian Deadlift",    t:"db",  sets:3, reps:8,  w:40,  inc:5,  rest:120, creep:2, note:"each hand"}
 };
@@ -278,6 +278,10 @@ var DAYS = [
 ];
 /* plates available PER SIDE */
 var PLATES = [[45,4],[35,1],[25,2],[10,3],[5,1],[2.5,1]];
+/* A pair of 1.25s is the only way to make a 2.5 lb jump on the bar. Off by
+   default — without them the top tier slows its cadence instead. */
+function plateList(){ return S && S.micro ? PLATES.concat([[1.25,2]]) : PLATES; }
+function minStep(){ return (S && S.micro) ? 2.5 : 5; }
 /* owned, but he'd rather build the load out of 25s and 10s. The solver only
    reaches for these when there is no exact load without them. */
 var AVOID  = {35:true};
@@ -289,8 +293,8 @@ var PTEXT  = {55:"rgba(255,255,255,.78)",45:"rgba(255,255,255,.82)",35:"rgba(0,0
 var S;
 function fresh(){
   var lf = {};
-  for (var k in LIFTS) lf[k] = {w:LIFTS[k].w, reps:LIFTS[k].reps, inc:LIFTS[k].inc, miss:0, best:0};
-  return {v:1, day:0, lifts:lf, bar:45, ezBar:20, dbStep:5, hist:[], live:null, rest:null, lastBackup:null};
+  for (var k in LIFTS) lf[k] = {w:LIFTS[k].w, reps:LIFTS[k].reps, miss:0, best:0, hold:0};
+  return {v:1, day:0, lifts:lf, bar:45, ezBar:20, dbStep:5, hist:[], live:null, rest:null, lastBackup:null, micro:false};
 }
 function num(x, d){ return (typeof x === "number" && isFinite(x) && x >= 0) ? x : d; }
 function sane(o){
@@ -300,8 +304,8 @@ function sane(o){
     var a = o.lifts[k]; if (!a || typeof a !== "object") continue;
     n.lifts[k].w    = num(a.w,    LIFTS[k].w);
     n.lifts[k].reps = num(a.reps, LIFTS[k].reps);
-    n.lifts[k].inc  = num(a.inc,  LIFTS[k].inc);
     n.lifts[k].miss = num(a.miss, 0);
+    n.lifts[k].hold = num(a.hold, 0);
     n.lifts[k].best = num(a.best, 0);
   }
   n.day    = num(o.day, 0) % 3;
@@ -332,6 +336,7 @@ function sane(o){
   }
   if (o.rest && num(o.rest.end,0) > Date.now()) n.rest = o.rest;
   if (typeof o.lastBackup === "string") n.lastBackup = o.lastBackup;
+  n.micro = !!o.micro;
   return n;
 }
 function load(){
@@ -356,11 +361,11 @@ function greedy(per, list){
 function plateMath(total, t){
   var bar = barWeight(t), per = (total - bar)/2;
   if (per < 0) return {ok:false, per:0, list:[], left:0};
-  var pref = [];
-  for (var i=0;i<PLATES.length;i++) if (!AVOID[PLATES[i][0]]) pref.push(PLATES[i]);
+  var all = plateList(), pref = [];
+  for (var i=0;i<all.length;i++) if (!AVOID[all[i][0]]) pref.push(all[i]);
   var a = greedy(per, pref);
   if (a.ok) return a;
-  var b = greedy(per, PLATES);      /* only now do the 35s come off the rack */
+  var b = greedy(per, all);         /* only now do the 35s come off the rack */
   return b.ok ? b : a;
 }
 function fmt(x){ return (Math.round(x*10)/10).toString().replace(/\.0$/,""); }
@@ -459,6 +464,24 @@ function barSVG(total, t){
   s += '</svg>';
   var desc = pm.list.length ? pm.list.map(function(p){ return p[1]+"×"+fmt(p[0]); }).join("  ") : "—";
   return {svg:s, desc:desc, ok:pm.ok, per:pm.per, bar:bar, left:pm.left};
+}
+
+/* ---------- progression step ---------- */
+/* Tendons adapt slower than muscle, so the climb tapers on a schedule rather
+   than waiting for a missed rep to force a deload. Above the last rung the bar
+   still moves 5 lb (his smallest pair is 2.5s) but only every second success —
+   the same effective rate a 2.5 lb jump would give, without new plates.
+   Turning microplates on in Setup swaps the slow cadence for real 2.5s. */
+function stepFor(id, w){
+  var L = LIFTS[id];
+  if (!L.ladder) return {inc: (L.t === "db") ? S.dbStep : 5, hold: 1};
+  for (var i=0;i<L.ladder.length;i++)
+    if (w < L.ladder[i][0]) return {inc: L.ladder[i][1], hold: 1};
+  return (S.micro) ? {inc: 2.5, hold: 1} : {inc: 5, hold: 2};
+}
+function stepLabel(id, w){
+  var f = stepFor(id, w);
+  return "+" + fmt(f.inc) + (f.hold > 1 ? " every 2nd" : "");
 }
 
 /* ---------- warm-up ramp ---------- */
@@ -607,7 +630,7 @@ function setRep(i,j,r){
 }
 function bumpW(i,dir){
   var e = S.live.ent[i], L = LIFTS[e.id];
-  var stepv = (L.t==="db") ? S.dbStep : 5;
+  var stepv = (L.t==="db") ? S.dbStep : minStep();
   e.w = Math.max(0, e.w + dir*stepv); e.ovr = true; e.sel = -1; e.wu = [];
   save(); renderTrain();
 }
@@ -632,13 +655,19 @@ function finishSession(){
     if (hitAll){
       st.miss = 0;
       if (L.creep && st.reps < LIFTS[e.id].reps + L.creep){
-        st.reps++; ups.push(L.n + " → " + st.reps + " reps");
+        st.reps++; ups.push(L.n + " \u2192 " + st.reps + " reps");
       } else {
-        st.w = e.w + st.inc; st.reps = LIFTS[e.id].reps;
-        ups.push(L.n + " → " + fmt(st.w) + (L.t==="db" ? " per hand" : " lb"));
+        var sf = stepFor(e.id, e.w);
+        st.hold = (st.hold || 0) + 1;
+        if (st.hold >= sf.hold){
+          st.w = e.w + sf.inc; st.reps = LIFTS[e.id].reps; st.hold = 0;
+          ups.push(L.n + " \u2192 " + fmt(st.w) + (L.t==="db" ? " per hand" : " lb"));
+        } else {
+          ups.push(L.n + " \u2192 repeat " + fmt(e.w) + " once more, then +" + fmt(sf.inc));
+        }
       }
     } else {
-      st.miss++;
+      st.miss++; st.hold = 0;
       if (st.miss >= 2) deloads.push(e.id);
     }
   }
@@ -668,10 +697,9 @@ function applyDeload(ids){
   for (var i=0;i<ids.length;i++){
     var id = ids[i]; if (!id) continue;
     var st = S.lifts[id], L = LIFTS[id];
-    var stepv = (L.t==="db") ? S.dbStep : 5;
+    var stepv = (L.t==="db") ? S.dbStep : minStep();
     st.w = Math.max(stepv, Math.floor((st.w*0.9)/stepv)*stepv);
-    st.reps = L.reps; st.miss = 0;
-    if (st.inc > 5) st.inc = 5;
+    st.reps = L.reps; st.miss = 0; st.hold = 0;
   }
   save(); toast("Deloaded. Climb back up.");
 }
@@ -834,6 +862,8 @@ function renderProg(){
       : fmt(st2.w) + (L2.t==="db" ? " \u00d72" : " lb");
     h += '<div class="frow"><div class="fl"><div class="t">'+esc(L2.n)+'</div>'+
          '<div class="s">'+L2.sets+' \u00d7 '+(L2.t==="bw"?"AMRAP":st2.reps)+
+         (L2.t==="bw"?"":'  \u00b7  '+stepLabel(k2, st2.w))+
+         (st2.hold?'  \u00b7  repeat':'')+
          (st2.miss?'  \u00b7  '+st2.miss+' miss':'')+'</div></div>'+
          '<div class="num" style="font-size:15px">'+val+'</div></div>';
   }
@@ -861,6 +891,10 @@ function renderSet(){
        '<input class="inp num" type="number" data-eq="ezBar" value="'+S.ezBar+'"></div>';
   h += '<div class="frow"><div class="fl"><div class="t">Dumbbell step</div><div class="s">smallest jump per hand</div></div>'+
        '<input class="inp num" type="number" data-eq="dbStep" value="'+S.dbStep+'"></div>';
+  h += '<div class="frow"><div class="fl"><div class="t">1.25 lb microplates</div>'+
+       '<div class="s">'+(S.micro ? "on \u2014 top-end lifts move 2.5 lb each session"
+                                  : "off \u2014 top-end lifts move 5 lb every 2nd session")+'</div></div>'+
+       '<button class="btn ghost sm" id="micro" style="width:84px;padding:11px">'+(S.micro?"On":"Off")+'</button></div>';
   h += '<div class="sect">Your data</div>';
   h += '<div class="frow"><div class="fl"><div class="t">Storage</div>'+
        '<div class="s" id="pstat">'+esc(persistText())+'</div></div></div>';
@@ -920,7 +954,7 @@ function render(){
 
 /* ============================ events ============================ */
 document.addEventListener("click", function(ev){
-  var t = ev.target.closest("[data-v],[data-open],[data-s],[data-p],[data-r],[data-w],[data-u],[data-dl],#finish,#reset-sess,#exp-csv,#exp-json,#imp-json,#wipe,#rskip,#do-imp");
+  var t = ev.target.closest("[data-v],[data-open],[data-s],[data-p],[data-r],[data-w],[data-u],[data-dl],#finish,#reset-sess,#exp-csv,#exp-json,#imp-json,#wipe,#rskip,#do-imp,#micro");
   if (!t) {
     if (ev.target.id === "modal") closeSheet();
     return;
@@ -973,6 +1007,22 @@ document.addEventListener("click", function(ev){
     var any = S.live.ent.some(function(e2){ return e2.sets.some(function(x){ return x!==null; }); });
     if (!any){ toast("Nothing logged yet."); return; }
     stopRest(); finishSession(); return;
+  }
+  if (t.id === "micro"){
+    S.micro = !S.micro;
+    if (!S.micro){
+      /* coming off microplates, drop any half-step weight to something the bar can make */
+      for (var mk in LIFTS){
+        if (LIFTS[mk].t === "db" || LIFTS[mk].t === "bw") continue;
+        S.lifts[mk].w = Math.floor(S.lifts[mk].w/5)*5;
+      }
+      if (S.live) S.live.ent.forEach(function(me){
+        if (LIFTS[me.id].t !== "db" && LIFTS[me.id].t !== "bw") me.w = Math.floor(me.w/5)*5;
+      });
+    }
+    save(); renderSet();
+    toast(S.micro ? "Microplates on \u2014 2.5 lb jumps at the top." : "Microplates off.");
+    return;
   }
   if (t.id === "reset-sess"){ S.live = null; save(); renderTrain(); toast("Session cleared."); return; }
   if (t.id === "rskip"){ stopRest(); return; }
