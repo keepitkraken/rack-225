@@ -160,6 +160,9 @@ main{padding:14px 16px 24px;max-width:640px;margin:0 auto}
   padding:9px 16px;display:none;align-items:center;gap:13px}
 #rest.on{display:flex}
 #rest .t{font-family:var(--mono);font-size:23px;color:var(--signal);min-width:66px}
+#rest.go{border-top-color:var(--done);background:#1C3330}
+#rest.go .t{font-family:var(--disp);font-weight:700;letter-spacing:.08em;color:var(--done);font-size:25px}
+#rest.go .rbar{background:var(--done)}
 #rest .l{flex:1;font-size:12px;color:var(--muted);line-height:1.3}
 #rest .x{padding:8px 13px;border:1px solid var(--line);border-radius:7px;font-size:12px}
 .rbar{position:absolute;left:0;bottom:0;height:2px;background:var(--signal);transition:width 1s linear}
@@ -329,6 +332,7 @@ function sane(o){
       return r && r.date && Object.prototype.toString.call(r.items) === "[object Array]";
     }).map(function(r){
       return {date:String(r.date), day:String(r.day||"A"),
+        mins:(typeof r.mins === "number" && r.mins >= 0) ? r.mins : null,
         items:r.items.filter(function(it){ return it && LIFTS[it.id]; }).map(function(it){
           return {id:it.id, w:num(it.w,0), tgt:num(it.tgt,0),
             reps:(Object.prototype.toString.call(it.reps)==="[object Array]"?it.reps:[]).map(function(x){
@@ -342,11 +346,14 @@ function sane(o){
         Object.prototype.toString.call(e.sets) === "[object Array]"; })){
     lv.ent.forEach(function(e){
       if (Object.prototype.toString.call(e.wu) !== "[object Array]") e.wu = [];
-      if (typeof e.sel !== "number") e.sel = -1;
+
     });
     n.live = lv;
   }
-  if (o.rest && num(o.rest.end,0) > Date.now()) n.rest = o.rest;
+  if (o.rest && num(o.rest.end,0) > Date.now()){
+    n.rest = o.rest;
+    if (typeof n.rest.go !== "string") n.rest.go = n.rest.lab;
+  }
   if (typeof o.lastBackup === "string") n.lastBackup = o.lastBackup;
   n.micro = !!o.micro;
   if (typeof o.progSel === "string") n.progSel = o.progSel;
@@ -382,6 +389,11 @@ function plateMath(total, t){
   return b.ok ? b : a;
 }
 function fmt(x){ return (Math.round(x*10)/10).toString().replace(/\.0$/,""); }
+function dur(m){
+  if (!m && m !== 0) return "";
+  if (m < 60) return m + " min";
+  return Math.floor(m/60) + "h " + (m%60) + "m";
+}
 function today(){ var d = new Date(); return d.toISOString().slice(0,10); }
 function prettyDate(s){
   var p = s.split("-"), d = new Date(+p[0], +p[1]-1, +p[2]);
@@ -431,7 +443,7 @@ function startLive(){
     var id = d.l[i], L = LIFTS[id], st = S.lifts[id];
     var sets = [];
     for (var j=0;j<L.sets;j++) sets.push(null);
-    ent.push({id:id, w:st.w, reps:st.reps, sets:sets, ovr:false});
+    ent.push({id:id, w:st.w, reps:st.reps, sets:sets, ovr:false, wu:[], sel:null});
   }
   S.live = {date:today(), day:d.id, ent:ent, open:0};
   save();
@@ -542,7 +554,9 @@ function cardHTML(e, i){
        '<span class="tick">✓</span></button>';
   h += '<div class="card-body">';
 
-  var ws = warmSets(e.w, L.t, L), sel = (typeof e.sel === "number") ? e.sel : -1;
+  var ws = warmSets(e.w, L.t, L), sel = (typeof e.sel === "number") ? e.sel : null;
+  /* untouched lift opens on its first rung, so the diagram shows what to load first */
+  if (sel === null) sel = ws.length ? 0 : -1;
   if (sel >= ws.length) sel = -1;
   var viewW = sel >= 0 ? ws[sel].w : e.w;
   if (!isBW && !isDB){
@@ -626,17 +640,39 @@ function setRep(i,j,r){
   var e = S.live.ent[i];
   e.sets[j] = (r < 0 ? null : r);
   e.sel = -1;
+  /* stamp real work only: first logged set to last, so opening the app hours
+     before you lift doesn't turn into an eleven-hour workout */
+  if (r >= 0){
+    if (!S.live.t0) S.live.t0 = Date.now();
+    S.live.t1 = Date.now();
+  }
   S.live.pick = null;
   if (r >= 0){
     var L = LIFTS[e.id];
     var nxt = -1;
     for (var k=0;k<e.sets.length;k++) if (e.sets[k]===null){ nxt = k; break; }
-    if (nxt >= 0) startRest(L.rest, L.n + " — set " + (nxt+1) + " next");
+    if (nxt >= 0) startRest(L.rest, L.n + " \u2014 set " + (nxt+1) + " next",
+                            L.n + " \u2014 set " + (nxt+1) + ", " + fmt(e.w) +
+                            (L.t === "bw" ? "" : " \u00d7 " + e.reps));
     else {
-      stopRest();
+      /* lift finished: the walk to the next exercise is a rest too, sized by
+         what is coming rather than what just ended */
       var ni = -1;
       for (var m=i+1;m<S.live.ent.length;m++) if(!entDone(S.live.ent[m])){ ni = m; break; }
-      if (ni >= 0) S.live.open = ni;
+      if (ni < 0) for (var m2=0;m2<S.live.ent.length;m2++) if(!entDone(S.live.ent[m2])){ ni = m2; break; }
+      if (ni >= 0){
+        S.live.open = ni;
+        var NE = S.live.ent[ni], NL = LIFTS[NE.id];
+        var nw = warmSets(NE.w, NL.t, NL);
+        var first = nw.length ? nw[0].w : NE.w;
+        var lab = NL.t === "bw" ? NL.n + " \u2014 up next"
+                : NL.n + " \u2014 load " + fmt(first) + (nw.length ? " to warm up" : "");
+        var golab = nw.length ? (NL.n + " \u2014 " + fmt(nw[0].w) + " \u00d7 " + nw[0].r)
+                              : (NL.n + " \u2014 " + (NL.t === "bw" ? "AMRAP" : fmt(NE.w) + " \u00d7 " + NE.reps));
+        startRest(Math.min(NL.rest, 120), lab, golab);
+      } else {
+        stopRest();
+      }
     }
   }
   save(); renderTrain();
@@ -644,13 +680,17 @@ function setRep(i,j,r){
 function bumpW(i,dir){
   var e = S.live.ent[i], L = LIFTS[e.id];
   var stepv = (L.t==="db") ? S.dbStep : minStep();
-  e.w = Math.max(0, e.w + dir*stepv); e.ovr = true; e.sel = -1; e.wu = [];
+  e.w = Math.max(0, e.w + dir*stepv); e.ovr = true; e.sel = null; e.wu = [];
   save(); renderTrain();
 }
 
 /* ---------- progression ---------- */
 function finishSession(){
-  var d = DAYS[S.day % 3], rec = {date:S.live.date, day:S.live.day, items:[]}, deloads = [], ups = [];
+  var d = DAYS[S.day % 3], deloads = [], ups = [];
+  /* real work only: first logged set to last */
+  var mins = (S.live.t0 && S.live.t1 && S.live.t1 > S.live.t0)
+               ? Math.round((S.live.t1 - S.live.t0)/60000) : null;
+  var rec = {date:S.live.date, day:S.live.day, items:[], mins:mins};
   for (var i=0;i<S.live.ent.length;i++){
     var e = S.live.ent[i], L = LIFTS[e.id], st = S.lifts[e.id];
     var logged = e.sets.filter(function(x){ return x!==null; });
@@ -692,7 +732,7 @@ function finishSession(){
 }
 function showSummary(ups, deloads, rec){
   var h = '<h2>Session logged</h2>';
-  h += '<p>'+prettyDate(rec.date)+' · Session '+rec.day+'. Next up is Session '+DAYS[S.day%3].id+'.</p>';
+  h += '<p>'+prettyDate(rec.date)+' \u00b7 Session '+rec.day+(rec.mins ? ' \u00b7 '+esc(dur(rec.mins)) : '')+'. Next up is Session '+DAYS[S.day%3].id+'.</p>';
   if (ups.length) h += '<div class="fine">'+ups.map(esc).join("<br>")+'</div>';
   if (!ups.length && !deloads.length) h += '<p>Nothing moved this time. Same weights next go.</p>';
   if (deloads.length){
@@ -721,8 +761,10 @@ function applyDeload(ids){
 /* Deadline-based, not tick-based: a locked screen or a backgrounded tab
    throttles timers, so we always recompute from the wall clock. */
 var RT = null, WL = null;
-function startRest(sec, label){
-  S.rest = {end: Date.now() + sec*1000, tot: sec, lab: label};
+function startRest(sec, label, goLabel){
+  clearGo();
+  document.getElementById("rskip").textContent = "Skip";
+  S.rest = {end: Date.now() + sec*1000, tot: sec, lab: label, go: goLabel || label};
   save(); runRest();
 }
 function runRest(){
@@ -730,7 +772,7 @@ function runRest(){
   if (!S.rest){ document.getElementById("rest").classList.remove("on"); return; }
   document.getElementById("rest").classList.add("on");
   document.getElementById("rl").textContent = S.rest.lab;
-  keepAwake();
+  syncAwake();
   paintRest();
   RT = setInterval(paintRest, 250);
 }
@@ -741,23 +783,62 @@ function paintRest(){
   document.getElementById("rt").textContent = m + ":" + (sec<10?"0":"") + sec;
   document.getElementById("rbar").style.width = (100*left/S.rest.tot) + "%";
   if (left <= 0){
+    var lab = S.rest ? (S.rest.go || S.rest.lab) : "";
     stopRest();
     if (navigator.vibrate) navigator.vibrate([180,90,180]);
-    toast("Rest done — go.");
+    showGo(lab);
   }
 }
 function stopRest(){
   if (RT) clearInterval(RT); RT = null;
   S.rest = null; save();
-  document.getElementById("rest").classList.remove("on");
-  releaseAwake();
+  var box = document.getElementById("rest");
+  box.classList.remove("on"); box.classList.remove("go");
+  syncAwake();
+}
+/* When a rest runs out the bar turns green and says LIFT instead of vanishing,
+   so a missed buzz still leaves something to see. Clears itself, or on a tap. */
+var GO = null;
+function showGo(label){
+  var box = document.getElementById("rest");
+  document.getElementById("rt").textContent = "LIFT";
+  document.getElementById("rl").textContent = label || "Rest is up";
+  document.getElementById("rbar").style.width = "100%";
+  box.classList.add("on"); box.classList.add("go");
+  document.getElementById("rskip").textContent = "Got it";
+  if (GO) clearTimeout(GO);
+  GO = setTimeout(clearGo, 15000);
+}
+function clearGo(){
+  if (GO) clearTimeout(GO); GO = null;
+  var box = document.getElementById("rest");
+  box.classList.remove("on"); box.classList.remove("go");
 }
 /* keep the screen on while resting so the phone doesn't sleep mid-set */
 function keepAwake(){
   try {
     if (navigator.wakeLock && !WL)
-      navigator.wakeLock.request("screen").then(function(w){ WL = w; }, function(){});
+      navigator.wakeLock.request("screen").then(function(w){
+        WL = w;
+        w.addEventListener("release", function(){ WL = null; });
+      }, function(){});
   } catch(e){}
+}
+/* Hold the screen for as long as a session is actually underway — from the
+   first logged set until you finish — and only on the Train tab. */
+function sessionLive(){
+  if (!S || !S.live) return false;
+  if (S.rest) return true;
+  for (var i=0;i<S.live.ent.length;i++){
+    var e = S.live.ent[i];
+    for (var j=0;j<e.sets.length;j++) if (e.sets[j] !== null) return true;
+    for (var k=0;k<(e.wu||[]).length;k++) if (e.wu[k]) return true;
+  }
+  return false;
+}
+function syncAwake(){
+  if (VIEW === "train" && sessionLive() && document.visibilityState === "visible") keepAwake();
+  else releaseAwake();
 }
 function releaseAwake(){
   try { if (WL){ WL.release(); WL = null; } } catch(e){}
@@ -765,7 +846,8 @@ function releaseAwake(){
 document.addEventListener("visibilitychange", function(){
   if (document.visibilityState === "visible"){
     if (S && S.rest) runRest();
-  }
+    syncAwake();
+  } else releaseAwake();
 });
 
 /* ============================ render: history ============================ */
@@ -779,7 +861,8 @@ function renderHist(){
   for (var i=0;i<S.hist.length;i++){
     var r = S.hist[i];
     h += '<div class="hrow"><div class="hh"><span class="hd2">Session '+r.day+'</span>'+
-         '<span class="dt">'+prettyDate(r.date)+'</span></div><div class="hl">';
+         '<span class="dt">'+prettyDate(r.date)+(r.mins?' \u00b7 '+esc(dur(r.mins)):'')+
+         '</span></div><div class="hl">';
     for (var j=0;j<r.items.length;j++){
       var it = r.items[j], L = LIFTS[it.id];
       var reps = it.reps.map(function(x){ return x===null?"–":x; }).join("/");
@@ -1003,11 +1086,12 @@ function renderSet(){
 
 /* ============================ export ============================ */
 function csv(){
-  var rows = [["date","session","lift","weight_lb","target_reps","set1","set2","set3","set4"]];
+  var rows = [["date","session","minutes","lift","weight_lb","target_reps","set1","set2","set3","set4"]];
   for (var i=S.hist.length-1;i>=0;i--){
     var r = S.hist[i];
     for (var j=0;j<r.items.length;j++){
-      var it = r.items[j], row = [r.date, r.day, LIFTS[it.id].n, it.w, it.tgt];
+      var it = r.items[j], row = [r.date, r.day, (r.mins===null||r.mins===undefined)?"":r.mins,
+                                  LIFTS[it.id].n, it.w, it.tgt];
       for (var k=0;k<4;k++) row.push(it.reps[k]===undefined||it.reps[k]===null ? "" : it.reps[k]);
       rows.push(row);
     }
@@ -1074,17 +1158,23 @@ document.addEventListener("click", function(ev){
       var gw = warmSets(ge.w, GL.t, GL);
       if (!ge.wu) ge.wu = [];
       if (ge.wu[gj] && ge.sel === gj){
-        /* tapping the rung you're already on clears it */
-        ge.wu[gj] = false;
+        /* tapping the rung you're already on clears it, and leaves you there */
+        ge.wu[gj] = false; ge.sel = gj;
         stopRest();
       } else {
         var wasDone = !!ge.wu[gj];
-        ge.wu[gj] = true; ge.sel = gj;
-        /* only the last rung earns a rest — the rest of the ramp is continuous */
-        if (!wasDone && gj === gw.length - 1)
-          startRest(90, GL.n + " \u2014 first work set next");
+        ge.wu[gj] = true;
+        if (wasDone) ge.sel = gj;               /* just looking at an old rung */
+        else if (gj < gw.length - 1){
+          ge.sel = gj + 1;                      /* advance: show the next load */
+          startRest(45, GL.n + " \u2014 load " + fmt(gw[gj+1].w) + " next",
+                        GL.n + " \u2014 " + fmt(gw[gj+1].w) + " \u00d7 " + gw[gj+1].r);
+        } else {
+          ge.sel = -1;                          /* ramp done: show the work weight */
+          startRest(90, GL.n + " \u2014 load " + fmt(ge.w) + " for your first work set",
+                        GL.n + " \u2014 " + fmt(ge.w) + " \u00d7 " + ge.reps);
+        }
       }
-      ge.sel = gj;
     }
     save(); renderTrain(); return;
   }
@@ -1124,7 +1214,7 @@ document.addEventListener("click", function(ev){
     };
     return;
   }
-  if (t.id === "rskip"){ stopRest(); return; }
+  if (t.id === "rskip"){ if (S.rest) stopRest(); else clearGo(); return; }
   if (t.id === "exp-csv"){ download("rack-log-"+today()+".csv", csv(), "text/csv"); toast("CSV saved."); return; }
   if (t.id === "exp-json"){
     S.lastBackup = today(); save();
