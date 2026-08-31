@@ -279,14 +279,15 @@ var LIFTS = {
   deadlift:   {n:"Deadlift",             t:"bar", sets:1, reps:5,  w:155, inc:10, rest:180, warm:true, nobar:true, floor:135, ladder:[[225,10],[315,5]]},
   ohp:        {n:"Overhead Press",       t:"bar", sets:3, reps:5,  w:80,  inc:5,  rest:180, warm:true, ladder:[[115,5]]},
   chinups:    {n:"Chin-Ups",             t:"bw",  sets:3, reps:0,  w:0,   inc:5,  rest:90},
-  ezCurl:     {n:"EZ Bar Curl",          t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60},
+  ezCurl:     {n:"EZ Bar Curl",          t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, note:"superset with skullcrushers"},
+  skull:      {n:"EZ Skullcrusher",      t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, note:"superset with curls"},
   benchVol:   {n:"Bench Press — Volume", t:"bar", sets:4, reps:8,  w:95,  inc:5,  rest:120, warm:true, ladder:[[145,5]]},
   incline:    {n:"Incline DB Press",     t:"db",  sets:3, reps:10, w:45,  inc:5,  rest:120, creep:2},
   rdl:        {n:"DB RDL"          ,    t:"db",  sets:3, reps:8,  w:40,  inc:5,  rest:120, creep:2, note:"each hand"}
 };
 var DAYS = [
   {id:"A", n:"Squat + Heavy Bench",       l:["squat","benchHeavy","dbRow","dips"]},
-  {id:"B", n:"Deadlift + Press",          l:["deadlift","ohp","chinups","ezCurl"]},
+  {id:"B", n:"Deadlift + Press",          l:["deadlift","ohp","chinups","ezCurl","skull"]},
   {id:"C", n:"Volume Bench + Posterior",  l:["benchVol","incline","rdl","dbRow"]}
 ];
 /* plates available PER SIDE */
@@ -394,7 +395,12 @@ function dur(m){
   if (m < 60) return m + " min";
   return Math.floor(m/60) + "h " + (m%60) + "m";
 }
-function today(){ var d = new Date(); return d.toISOString().slice(0,10); }
+function ymd(d){
+  var m = d.getMonth()+1, day = d.getDate();
+  return d.getFullYear()+"-"+(m<10?"0":"")+m+"-"+(day<10?"0":"")+day;
+}
+/* Local date, not UTC — an evening lift used to roll over to tomorrow. */
+function today(){ return ymd(new Date()); }
 function prettyDate(s){
   var p = s.split("-"), d = new Date(+p[0], +p[1]-1, +p[2]);
   return d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
@@ -690,7 +696,11 @@ function finishSession(){
   /* real work only: first logged set to last */
   var mins = (S.live.t0 && S.live.t1 && S.live.t1 > S.live.t0)
                ? Math.round((S.live.t1 - S.live.t0)/60000) : null;
-  var rec = {date:S.live.date, day:S.live.day, items:[], mins:mins};
+  /* Date the session by when the work actually happened. It used to inherit
+     S.live.date, which is stamped at creation — i.e. the moment you finished
+     the PREVIOUS workout — so every entry landed on the prior session's day. */
+  var when = S.live.t1 ? ymd(new Date(S.live.t1)) : today();
+  var rec = {date:when, day:S.live.day, items:[], mins:mins};
   for (var i=0;i<S.live.ent.length;i++){
     var e = S.live.ent[i], L = LIFTS[e.id], st = S.lifts[e.id];
     var logged = e.sets.filter(function(x){ return x!==null; });
@@ -807,7 +817,7 @@ function showGo(label){
   box.classList.add("on"); box.classList.add("go");
   document.getElementById("rskip").textContent = "Got it";
   if (GO) clearTimeout(GO);
-  GO = setTimeout(clearGo, 15000);
+  GO = setTimeout(clearGo, 30000);
 }
 function clearGo(){
   if (GO) clearTimeout(GO); GO = null;
