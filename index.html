@@ -73,6 +73,17 @@ main{padding:14px 16px 24px;max-width:640px;margin:0 auto}
 .card-body{display:none;padding:0 14px 14px;border-top:1px solid var(--line)}
 .card.open .card-body{display:block}
 
+.card.ss .card-body{padding-top:2px}
+.card.ss .card-hd .nm h3{white-space:normal;line-height:1.12}
+.mv{border-left:2px solid var(--line);padding:2px 0 2px 11px;margin-top:14px}
+.mv.act{border-left-color:var(--signal)}
+.mv.fin{border-left-color:var(--done);opacity:.62}
+.mv-hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px}
+.mv-n{font-family:var(--disp);text-transform:uppercase;letter-spacing:.04em;font-size:15px;font-weight:700}
+.mv-t{font-family:var(--mono);font-size:10px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+.mv.act .mv-t{color:var(--signal)}
+.mv .wt{margin-top:10px}
+
 /* ---------- bar diagram ---------- */
 .bar-wrap{margin:14px 0 4px;background:var(--surface2);border-radius:8px;padding:12px 12px 9px}
 .bar-wrap svg{display:block;width:100%;height:auto}
@@ -279,8 +290,8 @@ var LIFTS = {
   deadlift:   {n:"Deadlift",             t:"bar", sets:1, reps:5,  w:155, inc:10, rest:180, warm:true, nobar:true, floor:135, ladder:[[225,10],[315,5]]},
   ohp:        {n:"Overhead Press",       t:"bar", sets:3, reps:5,  w:80,  inc:5,  rest:180, warm:true, ladder:[[115,5]]},
   chinups:    {n:"Chin-Ups",             t:"bw",  sets:3, reps:0,  w:0,   inc:5,  rest:90},
-  ezCurl:     {n:"EZ Bar Curl",          t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, note:"superset with skullcrushers"},
-  skull:      {n:"EZ Skullcrusher",      t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, note:"superset with curls"},
+  ezCurl:     {n:"EZ Bar Curl",          t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, ss:"arms", sn:"Curls"},
+  skull:      {n:"EZ Skullcrusher",      t:"ez",  sets:2, reps:10, w:45,  inc:5,  rest:60, creep:2, ss:"arms", sn:"Skullcrushers"},
   benchVol:   {n:"Bench Press — Volume", t:"bar", sets:4, reps:8,  w:95,  inc:5,  rest:120, warm:true, ladder:[[145,5]]},
   incline:    {n:"Incline DB Press",     t:"db",  sets:3, reps:10, w:45,  inc:5,  rest:120, creep:2},
   rdl:        {n:"DB RDL"          ,    t:"db",  sets:3, reps:8,  w:40,  inc:5,  rest:120, creep:2, note:"each hand"}
@@ -463,6 +474,37 @@ function entDone(e){
   for (var i=0;i<e.sets.length;i++) if (e.sets[i]===null) return false;
   return true;
 }
+/* Consecutive lifts sharing an `ss` tag are a superset: one card, alternating
+   rounds, and no rest until the round is finished. */
+function groups(){
+  var g = [], cur = null;
+  for (var i=0;i<S.live.ent.length;i++){
+    var tag = LIFTS[S.live.ent[i].id].ss;
+    if (tag && cur && cur.ss === tag) cur.ids.push(i);
+    else { cur = {ss: tag || null, ids:[i]}; g.push(cur); }
+  }
+  return g;
+}
+function groupOf(i){
+  var g = groups();
+  for (var k=0;k<g.length;k++) if (g[k].ids.indexOf(i) >= 0) return g[k];
+  return {ss:null, ids:[i]};
+}
+function groupDone(g){
+  for (var k=0;k<g.ids.length;k++) if (!entDone(S.live.ent[g.ids[k]])) return false;
+  return true;
+}
+/* Next thing to do in a group, scanning round by round across its movements. */
+function nextInGroup(g){
+  var rounds = 0;
+  for (var k=0;k<g.ids.length;k++) rounds = Math.max(rounds, S.live.ent[g.ids[k]].sets.length);
+  for (var r=0;r<rounds;r++)
+    for (var m=0;m<g.ids.length;m++){
+      var e = S.live.ent[g.ids[m]];
+      if (r < e.sets.length && e.sets[r] === null) return {i:g.ids[m], round:r};
+    }
+  return null;
+}
 
 /* ============================ render: train ============================ */
 var PW = {55:20, 45:19, 35:16, 25:14, 10:10, 5:8, 2.5:6};
@@ -543,71 +585,114 @@ function warmSets(work, t, L){
   return out;
 }
 
-function cardHTML(e, i){
-  var L = LIFTS[e.id], st = S.lifts[e.id], open = (S.live.open===i);
-  var isBW = L.t==="bw", isDB = L.t==="db";
-  var doneN = 0; for (var q=0;q<e.sets.length;q++) if (e.sets[q]!==null) doneN++;
-  var amt = isBW ? (e.w > 0 ? "BW<small>+"+fmt(e.w)+"</small>" : "BW")
-                 : fmt(e.w) + (isDB?'<small>×2</small>':'<small>lb</small>');
-  var sub = isBW ? (e.sets.length+" × AMRAP" + (st.best? "  ·  best "+st.best:""))
-                 : (e.sets.length+" × "+e.reps + (L.note?"  ·  "+L.note:""));
-
-  var h = '<div class="card'+(entDone(e)?" done":"")+(open?" open":"")+'" data-c="'+i+'">';
-  h += '<button class="card-hd" data-open="'+i+'">'+
-       '<span class="idx num">'+(i+1)+'</span>'+
-       '<span class="nm"><h3>'+esc(L.n)+'</h3><div class="sub">'+esc(sub)+'</div></span>'+
-       '<span class="amt">'+amt+'</span>'+
-       '<span class="tick">✓</span></button>';
-  h += '<div class="card-body">';
-
-  var ws = warmSets(e.w, L.t, L), sel = (typeof e.sel === "number") ? e.sel : null;
-  /* untouched lift opens on its first rung, so the diagram shows what to load first */
+/* One card per group. A plain lift renders exactly as before; a superset
+   stacks its movements inside a single card so you never switch cards
+   mid-round. */
+function moveHTML(e, i, showWarm, showBar){
+  if (showBar === undefined) showBar = true;
+  var L = LIFTS[e.id], isBW = L.t === "bw", isDB = L.t === "db", h = "";
+  var ws = showWarm ? warmSets(e.w, L.t, L) : [];
+  var sel = (typeof e.sel === "number") ? e.sel : null;
   if (sel === null) sel = ws.length ? 0 : -1;
   if (sel >= ws.length) sel = -1;
   var viewW = sel >= 0 ? ws[sel].w : e.w;
-  if (!isBW && !isDB){
+
+  if (!isBW && !isDB && showBar){
     var b = barSVG(viewW, L.t);
     h += '<div class="bar-wrap">'+b.svg+
          '<div class="bar-legend"><span class="ps">'+esc(b.desc)+'</span>'+
-         '<span'+(b.ok?'':' style="color:var(--warn)"')+'>'+(sel >= 0 ? "warm-up \u00b7 "+fmt(b.per)+"/side" : (b.ok ? fmt(b.per)+"/side \u00b7 "+fmt(b.bar)+" bar" : "load "+fmt(e.w - b.left*2)+" instead"))+'</span></div></div>';
+         '<span'+(b.ok?'':' style="color:var(--warn)"')+'>'+
+         (sel >= 0 ? "warm-up \u00b7 "+fmt(b.per)+"/side"
+                   : (b.ok ? fmt(b.per)+"/side \u00b7 "+fmt(b.bar)+" bar"
+                           : "load "+fmt(e.w - b.left*2)+" instead"))+'</span></div></div>';
   }
-  if (isDB){
+  if (isDB && showBar){
     h += '<div class="bar-wrap"><div class="bar-legend"><span class="ps">'+fmt(e.w)+' lb per hand</span>'+
          '<span>set both dumbbells</span></div></div>';
   }
   if (ws.length){
     var wud = e.wu || [];
     h += '<div class="wu-lbl">Warm-up \u00b7 tap again to clear</div><div class="wu">';
-    for (var q=0;q<ws.length;q++){
+    for (var q=0;q<ws.length;q++)
       h += '<button class="wc'+(wud[q]?" hit":"")+(sel===q?" on":"")+'" data-u="'+i+'|'+q+'">'+
            '<span class="ww">'+fmt(ws[q].w)+'</span><span class="wr">\u00d7'+ws[q].r+'</span></button>';
-    }
     h += '<button class="wc work'+(sel<0?" on":"")+'" data-u="'+i+'|-1">'+
          '<span class="ww">'+fmt(e.w)+'</span><span class="wr">WORK</span></button></div>';
   }
-  {
-    h += '<div class="wt"><span class="wt-lbl">'+(isBW?"Added weight":"Working weight")+(e.ovr?' <span class="ovr">· changed</span>':'')+'</span>'+
-         '<button class="step" data-w="'+i+'|-1">−</button>'+
-         '<span class="wt-val num">'+fmt(e.w)+'</span>'+
-         '<button class="step" data-w="'+i+'|1">+</button></div>';
-  }
+  h += '<div class="wt"><span class="wt-lbl">'+(isBW?"Added weight":"Working weight")+
+       (e.ovr?' <span class="ovr">\u00b7 changed</span>':'')+'</span>'+
+       '<button class="step" data-w="'+i+'|-1">\u2212</button>'+
+       '<span class="wt-val num">'+fmt(e.w)+'</span>'+
+       '<button class="step" data-w="'+i+'|1">+</button></div>';
 
   h += '<div class="sets">';
   for (var j=0;j<e.sets.length;j++){
     var v = e.sets[j], cls = "chip", lab;
-    if (v===null){ lab = isBW ? "—" : e.reps; }
+    if (v===null){ lab = isBW ? "\u2014" : e.reps; }
     else { lab = v; cls += (isBW ? " hit" : (v>=e.reps ? " hit" : " miss")); }
     h += '<div class="'+cls+'"><button class="main" data-s="'+i+'|'+j+'">'+
-         '<span class="k">SET '+(j+1)+'</span><span class="v num">'+lab+'</span></button>'+
-         '<button class="car" data-p="'+i+'|'+j+'">▾</button></div>';
+         '<span class="k">'+(showWarm?"SET ":"ROUND ")+(j+1)+'</span>'+
+         '<span class="v num">'+lab+'</span></button>'+
+         '<button class="car" data-p="'+i+'|'+j+'">\u25be</button></div>';
   }
   h += '</div>';
-  if (S.live.pick && S.live.pick.i===i){
-    h += repPicker(i, S.live.pick.j, e, isBW);
+  if (S.live.pick && S.live.pick.i===i) h += repPicker(i, S.live.pick.j, e, isBW);
+  return h;
+}
+
+function cardHTML(g, gi){
+  var solo = g.ids.length === 1;
+  var i0 = g.ids[0], e0 = S.live.ent[i0], L0 = LIFTS[e0.id];
+  var open = (S.live.open === i0), done = groupDone(g);
+  var nx = nextInGroup(g);
+  var name, sub, amt;
+
+  if (solo){
+    var isBW0 = L0.t==="bw", isDB0 = L0.t==="db", st0 = S.lifts[e0.id];
+    name = L0.n;
+    sub  = isBW0 ? (e0.sets.length+" \u00d7 AMRAP" + (st0.best? "  \u00b7  best "+st0.best:""))
+                 : (e0.sets.length+" \u00d7 "+e0.reps + (L0.note?"  \u00b7  "+L0.note:""));
+    amt  = isBW0 ? (e0.w > 0 ? "BW<small>+"+fmt(e0.w)+"</small>" : "BW")
+                 : fmt(e0.w) + (isDB0?'<small>\u00d72</small>':'<small>lb</small>');
+  } else {
+    var names = [];
+    for (var k=0;k<g.ids.length;k++){
+      var NL3 = LIFTS[S.live.ent[g.ids[k]].id];
+      names.push(NL3.sn || NL3.n);
+    }
+    name = names.join(" + ");
+    var rounds = 0;
+    for (var k2=0;k2<g.ids.length;k2++) rounds = Math.max(rounds, S.live.ent[g.ids[k2]].sets.length);
+    sub  = rounds + " rounds \u00b7 alternate, no rest between";
+    amt  = nx ? fmt(S.live.ent[nx.i].w)+'<small>lb</small>'
+              : fmt(e0.w)+'<small>lb</small>';
+  }
+
+  var h = '<div class="card'+(done?" done":"")+(open?" open":"")+(solo?"":" ss")+'" data-c="'+i0+'">';
+  h += '<button class="card-hd" data-open="'+i0+'">'+
+       '<span class="idx num">'+(gi+1)+'</span>'+
+       '<span class="nm"><h3>'+esc(name)+'</h3><div class="sub">'+esc(sub)+'</div></span>'+
+       '<span class="amt">'+amt+'</span>'+
+       '<span class="tick">\u2713</span></button>';
+  h += '<div class="card-body">';
+
+  if (solo){
+    h += moveHTML(e0, i0, true);
+  } else {
+    for (var m=0;m<g.ids.length;m++){
+      var mi = g.ids[m], me = S.live.ent[mi], ML = LIFTS[me.id];
+      var active = nx && nx.i === mi;
+      h += '<div class="mv'+(active?" act":"")+(entDone(me)?" fin":"")+'">'+
+           '<div class="mv-hd"><span class="mv-n">'+esc(ML.n)+'</span>'+
+           '<span class="mv-t">'+(active?"do this next":(entDone(me)?"done":"then"))+'</span></div>';
+      h += moveHTML(me, mi, false, active);
+      h += '</div>';
+    }
   }
   h += '</div></div>';
   return h;
 }
+
 function repPicker(i,j,e,isBW){
   var top = isBW ? 40 : e.reps+4, lo = isBW ? 1 : Math.max(0, e.reps-5);
   var h = '<div class="picker"><div class="ttl">Set '+(j+1)+' — reps completed</div><div class="reps">';
@@ -631,11 +716,15 @@ function renderTrain(){
     'Until then, export from Setup before you close.</div>';
 
   if (!S.live) startLive();
-  for (var i=0;i<S.live.ent.length;i++) h += cardHTML(S.live.ent[i], i);
+  var gs = groups();
+  for (var i=0;i<gs.length;i++) h += cardHTML(gs[i], i);
 
   var all = S.live.ent.every(entDone);
   var any = S.live.ent.some(function(e2){ return e2.sets.some(function(x){ return x!==null; }); });
-  h += '<button class="btn" id="finish"'+(any?"":" disabled")+' style="margin-top:16px">'+
+  /* Only the genuinely-finished state gets the loud button. Mid-session it is
+     quiet and pushed down, and it asks before throwing away unlogged sets. */
+  h += '<button class="btn'+(all?"":" ghost")+'" id="finish"'+(any?"":" disabled")+
+       ' style="margin-top:'+(all?"18px":"34px")+'">'+
        (all || !any ? "Finish session" : "Finish session early")+'</button>';
   h += '<div class="dz"><button class="linkbtn" id="reset-sess">Clear this session</button></div>';
   el.innerHTML = h;
@@ -654,21 +743,30 @@ function setRep(i,j,r){
   }
   S.live.pick = null;
   if (r >= 0){
-    var L = LIFTS[e.id];
-    var nxt = -1;
-    for (var k=0;k<e.sets.length;k++) if (e.sets[k]===null){ nxt = k; break; }
-    if (nxt >= 0) startRest(L.rest, L.n + " \u2014 set " + (nxt+1) + " next",
-                            L.n + " \u2014 set " + (nxt+1) + ", " + fmt(e.w) +
-                            (L.t === "bw" ? "" : " \u00d7 " + e.reps));
-    else {
-      /* lift finished: the walk to the next exercise is a rest too, sized by
+    var L = LIFTS[e.id], g = groupOf(i), nx = nextInGroup(g);
+    if (nx && nx.round === j){
+      /* still inside this round of a superset — go straight to the partner */
+      stopRest();
+      var PE = S.live.ent[nx.i], PL = LIFTS[PE.id];
+      showGo(PL.n + " \u2014 " + fmt(PE.w) + " \u00d7 " + PE.reps);
+    } else if (nx){
+      var NE2 = S.live.ent[nx.i], NL2 = LIFTS[NE2.id];
+      var word = (g.ids.length > 1 ? "round " : "set ") + (nx.round+1);
+      startRest(L.rest, NL2.n + " \u2014 " + word + " next",
+                NL2.n + " \u2014 " + word + ", " + fmt(NE2.w) +
+                (NL2.t === "bw" ? "" : " \u00d7 " + NE2.reps));
+    } else {
+      /* group finished: the walk to the next exercise is a rest too, sized by
          what is coming rather than what just ended */
-      var ni = -1;
-      for (var m=i+1;m<S.live.ent.length;m++) if(!entDone(S.live.ent[m])){ ni = m; break; }
-      if (ni < 0) for (var m2=0;m2<S.live.ent.length;m2++) if(!entDone(S.live.ent[m2])){ ni = m2; break; }
-      if (ni >= 0){
-        S.live.open = ni;
-        var NE = S.live.ent[ni], NL = LIFTS[NE.id];
+      var gs = groups(), gi = -1;
+      for (var q1=0;q1<gs.length;q1++) if (gs[q1].ids[0] === g.ids[0]) gi = q1;
+      var ng = null;
+      for (var q2=gi+1;q2<gs.length;q2++) if (!groupDone(gs[q2])){ ng = gs[q2]; break; }
+      if (!ng) for (var q3=0;q3<gs.length;q3++) if (!groupDone(gs[q3])){ ng = gs[q3]; break; }
+      if (ng){
+        S.live.open = ng.ids[0];
+        var nn = nextInGroup(ng) || {i:ng.ids[0]};
+        var NE = S.live.ent[nn.i], NL = LIFTS[NE.id];
         var nw = warmSets(NE.w, NL.t, NL);
         var first = nw.length ? nw[0].w : NE.w;
         var lab = NL.t === "bw" ? NL.n + " \u2014 up next"
@@ -1196,7 +1294,23 @@ document.addEventListener("click", function(ev){
   if (t.id === "finish"){
     var any = S.live.ent.some(function(e2){ return e2.sets.some(function(x){ return x!==null; }); });
     if (!any){ toast("Nothing logged yet."); return; }
-    stopRest(); finishSession(); return;
+    var miss = [], nsets = 0;
+    for (var fi=0;fi<S.live.ent.length;fi++){
+      var fe = S.live.ent[fi], left = 0;
+      for (var fj=0;fj<fe.sets.length;fj++) if (fe.sets[fj] === null) left++;
+      if (left){ miss.push(LIFTS[fe.id].n + " (" + left + ")"); nsets += left; }
+    }
+    if (!miss.length){ stopRest(); finishSession(); return; }
+    openSheet('<h2>Finish early?</h2><p>'+nsets+' set'+(nsets>1?"s are":" is")+
+      ' still unlogged. Finishing now records what you did and counts the rest as missed, '+
+      'which can hold a lift at its current weight.</p>'+
+      '<div class="fine">'+esc(miss.join("  \u00b7  "))+'</div>'+
+      '<button class="btn" id="fin-yes">Finish anyway</button>'+
+      '<div class="row2"><button class="btn ghost" data-dl="">Keep lifting</button></div>');
+    document.getElementById("fin-yes").onclick = function(){
+      closeSheet(); stopRest(); finishSession();
+    };
+    return;
   }
   if (t.id === "micro"){
     S.micro = !S.micro;
